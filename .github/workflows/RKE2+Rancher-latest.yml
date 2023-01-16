@@ -1,0 +1,91 @@
+# This workflow will deploy RKE2 cluster with Rancher MCM running on top of it
+
+name: RKE2-Rancher-latest
+
+# Controls when the workflow will run
+on:
+  push:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  preparation:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout validator from gitlab
+        run: |
+          git config --global http.sslVerify false
+          git clone --recurse-submodules https://gitlab.suse.de/mkravec/scripts.git
+
+      - name: Build validator image
+        run: |
+          cd scripts
+          ./varke build
+
+      - name: Prepare env.conf file
+        env:
+          MAIN_SECRET: ${{ secrets.MAIN_SECRET }}
+        run: |
+          # TODO decrypt by using gpg and secret passphrase
+          cd scripts
+          cp /home/sles/env.conf.ci env.conf # .gpg
+
+  testing:
+    needs: [preparation]
+    runs-on: self-hosted
+
+    outputs:
+      # Stores what's needed by another steps and jobs
+      CLUSTER_LOCAL_ID: ${{ steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID }}
+
+    steps:
+      # Deploys RKE2 with given version and latest rancher (inc. RCs)
+      - name: Deploy local RKE2 with rancher
+        id: rke2-rancher-local
+        env:
+          GH_VERSION: v1.25
+        run: |
+          cd scripts
+          sed -i 's/-it/-i/g' varke
+          #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
+          ./varke run \
+            -n 1:0 -t rancher \
+            -e SUFFIX=th-ci-rke2-rancher \
+            -e GH_VERSION=$GH_VERSION \
+            -k
+
+      - name: Store CLUSTER_LOCAL_ID
+        id: get-local-cluster-id
+        if: always()
+        run: |
+          cd scripts
+          CLUSTER_LOCAL_ID=$(./validator_s390 -r | awk '{print $3}' | head -n1)
+          echo "CLUSTER_LOCAL_ID=$CLUSTER_LOCAL_ID" >> $GITHUB_OUTPUT
+
+      - name: Print out CLUSTER_LOCAL_ID
+        run: echo ${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}}
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: local-cluster-deployment
+          path: scripts/${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}}/logs/
+
+  cleanup:
+    runs-on: self-hosted
+    needs: [testing]
+    if: always()
+    
+    steps:
+      - name: Destroy cluster(s)
+        run: |
+          cd scripts
+          ./varke run -R
+
+      - name: Clean _work dir
+        if: always()
+        uses: colpal/actions-clean@v1
+
