@@ -15,6 +15,10 @@ on:
         default: v1.25
         type: string
         required: true
+      keep_env:
+        description: keeps the env running if not empty
+        required: false
+        default: ""
 
 jobs:
   preparation:
@@ -80,7 +84,7 @@ jobs:
   cleanup:
     runs-on: self-hosted
     needs: [testing]
-    if: always()
+    if: ${{ always() && !github.event.inputs.keep_env }}
     
     steps:
       - name: Destroy cluster(s)
