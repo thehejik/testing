@@ -9,6 +9,12 @@ on:
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      rke2_local_version:
+        description: rke2_local_version "v1.25.5+rke2r2"
+        default: v1.25
+        type: string
+        required: true
 
 jobs:
   preparation:
@@ -46,7 +52,7 @@ jobs:
       - name: Deploy local RKE2 with rancher
         id: rke2-rancher-local
         env:
-          GH_VERSION: v1.25
+          GH_VERSION: ${{ github.event.inputs.rke2_local_version }}
         run: |
           cd scripts
           sed -i 's/-it/-i/g' varke
@@ -64,9 +70,6 @@ jobs:
           cd scripts
           CLUSTER_LOCAL_ID=$(./validator_s390 -r | awk '{print $3}' | head -n1)
           echo "CLUSTER_LOCAL_ID=$CLUSTER_LOCAL_ID" >> $GITHUB_OUTPUT
-
-      - name: Print out CLUSTER_LOCAL_ID
-        run: echo ${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}}
 
       - uses: actions/upload-artifact@v3
         if: always()
