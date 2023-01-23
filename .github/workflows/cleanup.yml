@@ -1,0 +1,24 @@
+# Will remove leftovers from previous run (it expects the scripts.git is checkouted)
+
+name: Cleanup-runner
+# Controls when the workflow will run
+on:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: self-hosted
+    if: ${{ always() }}
+    
+    steps:
+      - name: Destroy all cluster(s)
+        run: |
+          cd scripts
+          ./varke run -R
+
+      - name: Clean _work dir
+        if: always()
+        uses: colpal/actions-clean@v1
+
