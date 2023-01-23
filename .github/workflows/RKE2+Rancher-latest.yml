@@ -4,15 +4,15 @@ name: RKE2-Rancher-latest
 
 # Controls when the workflow will run
 on:
-  push:
-    branches: [ "main" ]
+  # push:
+    # branches: [ "main" ]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
       rke2_local_version:
-        description: rke2_local_version "v1.25.5+rke2r2"
-        default: v1.25
+        description: rke2_local_version "v1.25.5+rke2r2" or "v1.24"
+        default: v1.24.9+rke2r2
         type: string
         required: true
       keep_env:
