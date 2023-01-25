@@ -1,0 +1,160 @@
+# This workflow will deploy K3S cluster with Rancher MCM running on top of it
+# It will also deploy another K3S cluster for import and perform the import
+
+name: K3S-Rancher-latest
+
+# Controls when the workflow will run
+on:
+  # push:
+    # branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      k3s_version:
+        description: k3s_version "v1.25.5+k3s2" or "v1.24"
+        default: v1.24.9+k3s2
+        type: string
+        required: true
+      keep_env:
+        description: keeps the env running if not empty
+        required: false
+        default: ""
+
+jobs:
+  preparation:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout validator from gitlab
+        run: |
+          git config --global http.sslVerify false
+          git clone --recurse-submodules https://gitlab.suse.de/mkravec/scripts.git
+
+      - name: Build validator image
+        run: |
+          cd scripts
+          ./varke build
+
+      - name: Prepare env.conf file
+        env:
+          MAIN_SECRET: ${{ secrets.MAIN_SECRET }}
+        run: |
+          # TODO decrypt by using gpg and secret passphrase
+          cd scripts
+          cp /home/sles/env.conf.ci env.conf # .gpg
+
+  # Provisions local K3S cluster with latest rancher
+  deploy-local:
+    needs: [preparation]
+    runs-on: self-hosted
+
+    outputs:
+      # Stores what's needed by another steps and jobs
+      CLUSTER_LOCAL_ID: ${{ steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID }}
+
+    steps:
+      # Deploys K3S with given version and latest rancher (inc. RCs)
+      - name: Deploy local K3S with rancher
+        id: k3s-rancher-local
+        env:
+          K3S_VERSION: ${{ github.event.inputs.k3s_version }}
+        run: |
+          cd scripts
+          sed -i 's/-it/-i/g' varke || true # if done already
+          #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
+          ./varke run \
+            -p k3s
+            -n 1:0 -t rancher \
+            -e SUFFIX=th-ci-k3s-rancher \
+            -v $K3S_VERSION \
+            -k
+
+      - name: Store CLUSTER_LOCAL_ID
+        id: get-local-cluster-id
+        if: always()
+        run: |
+          cd scripts
+          CLUSTER_LOCAL_ID=$(./validator_s390 -r | grep 'rancher' | awk '{print $3}')
+          echo "CLUSTER_LOCAL_ID=$CLUSTER_LOCAL_ID" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: local-cluster-deployment
+          path: scripts/${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}}/logs/
+
+  # Provision K3S for import ./varke run -n 1:0 -t join -e SUFFIX=th-ci-k3s-imported -e GH_VERSION=v1.24.9+k3s2 -k
+  deploy-imported:
+    needs: [preparation]
+    runs-on: self-hosted
+
+    outputs:
+      # Stores what's needed by another steps and jobs
+      CLUSTER_IMPORTED_ID: ${{ steps.get-imported-cluster-id.outputs.CLUSTER_IMPORTED_ID }}
+
+    steps:
+      # Deploys K3S with given version to import into local cluster with rancher
+      - name: Deploy downstream K3S cluster to import
+        id: k3s-imported
+        env:
+          K3S_VERSION: ${{ github.event.inputs.k3s_version }}
+        run: |
+          cd scripts
+          sed -i 's/-it/-i/g' varke || true # if done already
+          #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
+          ./varke run \
+            -p k3s
+            -n 1:0 -t join \
+            -e SUFFIX=th-ci-k3s-imported \
+            -v $K3S_VERSION \
+            -k
+
+      - name: Store CLUSTER_IMPORTED_ID
+        id: get-imported-cluster-id
+        if: always()
+        run: |
+          cd scripts
+          CLUSTER_IMPORTED_ID=$(./validator_s390 -r | grep 'imported' | awk '{print $3}')
+          echo "CLUSTER_IMPORTED_ID=$CLUSTER_IMPORTED_ID" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: imported-cluster-deployment
+          path: scripts/${{steps.get-imported-cluster-id.outputs.CLUSTER_IMPORTED_ID}}/logs/
+
+  # Import the imported cluster into local rancher cluster ./varke cluster_local -e IMPORTDIR=cluster_import -t import.sh
+  import-cluster:
+    needs: [deploy-local,deploy-imported]
+    runs-on: self-hosted
+
+    steps:
+      # Import the imported cluster into local rancher cluster
+      - name: Import downstream K3S cluster into rancher
+        run: |
+          cd scripts
+          ./varke ${{needs.deploy-local.outputs.CLUSTER_LOCAL_ID}} \
+          -e IMPORTDIR=${{needs.deploy-imported.outputs.CLUSTER_IMPORTED_ID}} \
+          -t import.sh
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: local-cluster-after-import
+          path: scripts/${{needs.deploy-local.outputs.CLUSTER_LOCAL_ID}}/logs/
+
+  cleanup:
+    runs-on: self-hosted
+    needs: [deploy-local,deploy-imported,import-cluster]
+    if: ${{ always() && !github.event.inputs.keep_env }}
+    
+    steps:
+      - name: Destroy cluster(s)
+        run: |
+          cd scripts
+          ./varke run -R
+
+      - name: Clean _work dir
+        if: always()
+        uses: colpal/actions-clean@v1
