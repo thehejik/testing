@@ -132,16 +132,15 @@ jobs:
       - name: Import downstream RKE2 cluster into rancher
         run: |
           cd scripts
-          ./varke ${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}} \
-          -e IMPORTDIR=${{steps.get-imported-cluster-id.outputs.CLUSTER_IMPORTED_ID}} \
+          ./varke ${{needs.deploy-local.outputs.CLUSTER_LOCAL_ID}} \
+          -e IMPORTDIR=${{needs.deploy-imported.outputs.CLUSTER_IMPORTED_ID}} \
           -t import.sh
 
       - uses: actions/upload-artifact@v3
         if: always()
         with:
           name: local-cluster-after-import
-          path: scripts/${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}}/logs/
-
+          path: scripts/${{needs.deploy-local.outputs.CLUSTER_LOCAL_ID}}/logs/
 
   cleanup:
     runs-on: self-hosted
@@ -157,4 +156,3 @@ jobs:
       - name: Clean _work dir
         if: always()
         uses: colpal/actions-clean@v1
-
