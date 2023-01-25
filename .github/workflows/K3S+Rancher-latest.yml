@@ -64,7 +64,7 @@ jobs:
           sed -i 's/-it/-i/g' varke || true # if done already
           #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
           ./varke run \
-            -p k3s
+            -p k3s \
             -n 1:0 -t rancher \
             -e SUFFIX=th-ci-k3s-rancher \
             -v $K3S_VERSION \
@@ -104,7 +104,7 @@ jobs:
           sed -i 's/-it/-i/g' varke || true # if done already
           #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
           ./varke run \
-            -p k3s
+            -p k3s \
             -n 1:0 -t join \
             -e SUFFIX=th-ci-k3s-imported \
             -v $K3S_VERSION \
