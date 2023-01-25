@@ -11,8 +11,8 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
-      rke2_local_version:
-        description: rke2_local_version "v1.25.5+rke2r2" or "v1.24"
+      rke2_version:
+        description: rke2_version "v1.25.5+rke2r2" or "v1.24"
         default: v1.24.9+rke2r2
         type: string
         required: true
@@ -58,7 +58,7 @@ jobs:
       - name: Deploy local RKE2 with rancher
         id: rke2-rancher-local
         env:
-          GH_VERSION: ${{ github.event.inputs.rke2_local_version }}
+          RKE2_VERSION: ${{ github.event.inputs.rke2_version }}
         run: |
           cd scripts
           sed -i 's/-it/-i/g' varke || true # if done already
@@ -66,7 +66,7 @@ jobs:
           ./varke run \
             -n 1:0 -t rancher \
             -e SUFFIX=th-ci-rke2-rancher \
-            -e GH_VERSION=$GH_VERSION \
+            -v $RKE2_VERSION \
             -k
 
       - name: Store CLUSTER_LOCAL_ID
@@ -97,7 +97,7 @@ jobs:
       - name: Deploy downstream RKE2 cluster to import
         id: rke2-imported
         env:
-          GH_VERSION: ${{ github.event.inputs.rke2_local_version }}
+          RKE2_VERSION: ${{ github.event.inputs.rke2_version }}
         run: |
           cd scripts
           sed -i 's/-it/-i/g' varke || true # if done already
@@ -105,7 +105,7 @@ jobs:
           ./varke run \
             -n 1:0 -t join \
             -e SUFFIX=th-ci-rke2-imported \
-            -e GH_VERSION=$GH_VERSION \
+            -v $RKE2_VERSION \
             -k
 
       - name: Store CLUSTER_IMPORTED_ID
