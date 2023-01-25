@@ -1,4 +1,5 @@
 # This workflow will deploy RKE2 cluster with Rancher MCM running on top of it
+# It will also deploy another RKE2 cluster for import and perform the import
 
 name: RKE2-Rancher-latest
 
@@ -43,7 +44,8 @@ jobs:
           cd scripts
           cp /home/sles/env.conf.ci env.conf # .gpg
 
-  testing:
+  # Provisions local RKE2 cluster with latest rancher
+  deploy-local:
     needs: [preparation]
     runs-on: self-hosted
 
@@ -59,7 +61,7 @@ jobs:
           GH_VERSION: ${{ github.event.inputs.rke2_local_version }}
         run: |
           cd scripts
-          sed -i 's/-it/-i/g' varke
+          sed -i 's/-it/-i/g' varke || true # if done already
           #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
           ./varke run \
             -n 1:0 -t rancher \
@@ -72,7 +74,7 @@ jobs:
         if: always()
         run: |
           cd scripts
-          CLUSTER_LOCAL_ID=$(./validator_s390 -r | awk '{print $3}' | head -n1)
+          CLUSTER_LOCAL_ID=$(./validator_s390 -r | grep 'rancher' | awk '{print $3}')
           echo "CLUSTER_LOCAL_ID=$CLUSTER_LOCAL_ID" >> $GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v3
@@ -81,9 +83,69 @@ jobs:
           name: local-cluster-deployment
           path: scripts/${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}}/logs/
 
+  # Provision RKE2 for import ./varke run -n 1:0 -t join -e SUFFIX=th-ci-rke2-imported -e GH_VERSION=v1.24.9+rke2r2 -k
+  deploy-imported:
+    needs: [preparation]
+    runs-on: self-hosted
+
+    outputs:
+      # Stores what's needed by another steps and jobs
+      CLUSTER_IMPORTED_ID: ${{ steps.get-imported-cluster-id.outputs.CLUSTER_IMPORTED_ID }}
+
+    steps:
+      # Deploys RKE2 with given version to import into local cluster with rancher
+      - name: Deploy downstream RKE2 cluster to import
+        id: rke2-imported
+        env:
+          GH_VERSION: ${{ github.event.inputs.rke2_local_version }}
+        run: |
+          cd scripts
+          sed -i 's/-it/-i/g' varke || true # if done already
+          #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
+          ./varke run \
+            -n 1:0 -t join \
+            -e SUFFIX=th-ci-rke2-imported \
+            -e GH_VERSION=$GH_VERSION \
+            -k
+
+      - name: Store CLUSTER_IMPORTED_ID
+        id: get-imported-cluster-id
+        if: always()
+        run: |
+          cd scripts
+          CLUSTER_IMPORTED_ID=$(./validator_s390 -r | grep 'imported' | awk '{print $3}')
+          echo "CLUSTER_IMPORTED_ID=$CLUSTER_IMPORTED_ID" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: imported-cluster-deployment
+          path: scripts/${{steps.get-imported-cluster-id.outputs.CLUSTER_IMPORTED_ID}}/logs/
+
+  # Import the imported cluster into local rancher cluster ./varke cluster_local -e IMPORTDIR=cluster_import -t import.sh
+  import-cluster:
+    needs: [deploy-local,deploy-imported]
+    runs-on: self-hosted
+
+    steps:
+      # Import the imported cluster into local rancher cluster
+      - name: Import downstream RKE2 cluster into rancher
+        run: |
+          cd scripts
+          ./varke ${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}} \
+          -e IMPORTDIR=${{steps.get-imported-cluster-id.outputs.CLUSTER_IMPORTED_ID}} \
+          -t import.sh
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: local-cluster-after-import
+          path: scripts/${{steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID}}/logs/
+
+
   cleanup:
     runs-on: self-hosted
-    needs: [testing]
+    needs: [deploy-local,deploy-imported,import-cluster]
     if: ${{ always() && !github.event.inputs.keep_env }}
     
     steps:
