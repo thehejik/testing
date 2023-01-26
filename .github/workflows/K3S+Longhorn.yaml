@@ -20,6 +20,8 @@ on:
         required: false
         default: ""
 
+concurrency: testing
+
 jobs:
   preparation:
     runs-on: self-hosted
@@ -43,7 +45,7 @@ jobs:
           cd scripts
           cp /home/sles/env.conf.ci env.conf # .gpg
 
-  # Provisions local K3S cluster with latest rancher
+  # Provisions K3S cluster with Longhorn
   deploy-local:
     needs: [preparation]
     runs-on: self-hosted
@@ -53,7 +55,7 @@ jobs:
       CLUSTER_LOCAL_ID: ${{ steps.get-local-cluster-id.outputs.CLUSTER_LOCAL_ID }}
 
     steps:
-      # Deploys K3S with given version and latest rancher (inc. RCs)
+      # Deploys K3S with given version and Longhorn from upstream helm repo
       - name: Deploy local K3S with Longhorn
         id: k3s-longhorn-local
         env:

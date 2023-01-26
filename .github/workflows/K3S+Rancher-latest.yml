@@ -21,6 +21,8 @@ on:
         required: false
         default: ""
 
+concurrency: testing
+
 jobs:
   preparation:
     runs-on: self-hosted
