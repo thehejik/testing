@@ -1,0 +1,111 @@
+# This workflow will deploy an RKE2 cluster for testing purposes
+# User can specify RKE2 version to be deployed as well as number of nodes
+
+name: RKE2-multinode
+
+# Controls when the workflow will run
+on:
+  # push:
+    # branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      rke2_version:
+        description: rke2_version "v1.25.5+rke2r2" or "v1.24"
+        default: v1.24.9+rke2r2
+        type: string
+        required: true
+      masters:
+        description: how many master nodes
+        required: false
+        default: 1
+      workers:
+        description: how many worker nodes
+        required: false
+        default: 1
+      keep_env:
+        description: keeps the env running if not empty
+        required: false
+        default: ""
+
+concurrency: testing
+
+jobs:
+  preparation:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout validator from gitlab
+        run: |
+          git config --global http.sslVerify false
+          git clone --recurse-submodules https://gitlab.suse.de/mkravec/scripts.git
+
+      - name: Build validator image
+        run: |
+          cd scripts
+          ./varke build
+
+      - name: Prepare env.conf file
+        env:
+          MAIN_SECRET: ${{ secrets.MAIN_SECRET }}
+        run: |
+          # TODO decrypt by using gpg and secret passphrase
+          cd scripts
+          cp /home/sles/env.conf.ci env.conf # .gpg
+
+  # Provisions RKE2 cluster
+  deploy-rke2:
+    needs: [preparation]
+    runs-on: self-hosted
+
+    outputs:
+      # Stores what's needed by another steps and jobs
+      CLUSTER_RKE2_ID: ${{ steps.get-rke2-cluster-id.outputs.CLUSTER_RKE2_ID }}
+
+    steps:
+      # Deploys RKE2 with given version and latest rancher (inc. RCs)
+      - name: Deploy local RKE2 with rancher
+        id: rke2-cluster
+        env:
+          RKE2_VERSION: ${{ github.event.inputs.rke2_version }}
+          MASTERS: ${{ github.event.inputs.masters }}
+          WORKERS: ${{ github.event.inputs.workers }}
+        run: |
+          cd scripts
+          sed -i 's/-it/-i/g' varke || true # if done already
+          #docker run --cgroupns=host --net=host -i -v $PWD:/app validator:rke \
+          ./varke run \
+            -n ${MASTERS}:${WORKERS} -t join \
+            -e SUFFIX=th-rke2-multi \
+            -v $RKE2_VERSION \
+            -k
+
+      - name: Store CLUSTER_RKE2_ID
+        id: get-rke2-cluster-id
+        if: always()
+        run: |
+          cd scripts
+          CLUSTER_RKE2_ID=$(./validator_s390 -r | grep 'th-rke2-multi' | awk '{print $3}')
+          echo "CLUSTER_RKE2_ID=$CLUSTER_RKE2_ID" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: rke2-cluster-deployment
+          path: scripts/${{steps.get-rke2-cluster-id.outputs.CLUSTER_RKE2_ID}}/logs/
+
+  cleanup:
+    runs-on: self-hosted
+    needs: [deploy-rke2]
+    if: ${{ always() && !github.event.inputs.keep_env }}
+    
+    steps:
+      - name: Destroy cluster(s)
+        run: |
+          cd scripts
+          ./varke run -R
+
+      - name: Clean _work dir
+        if: always()
+        uses: colpal/actions-clean@v1
